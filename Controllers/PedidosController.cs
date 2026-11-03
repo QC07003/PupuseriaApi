@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PupuseriaAPI.Data;
 using Telegram.Bot;
+using Telegram.Bot.Types.Enums;
 
 namespace PupuseriaAPI.Controllers;
 
@@ -19,20 +20,52 @@ public class PedidosController : ControllerBase
         _botClient = new TelegramBotClient(token);
     }
 
-    // GET: api/comandas
+    // GET: api/pedidos (Para el DASHBOARD: devuelve TODOS los pedidos sin filtrar)
+    [HttpGet("pedidos")]
+    public async Task<IActionResult> GetPedidos()
+    {
+        var pedidos = await _context.Pedidos
+            .Include(p => p.Detalles)
+            .OrderByDescending(p => p.Id)
+            .ToListAsync();
+
+        var resultado = pedidos.Select(p => new
+        {
+            id = p.Id,
+            numeroOrden = p.NumeroOrden,
+            cliente = p.ClienteNombre,
+            tipo_entrega = "Telegram",
+            estado = p.Estado,
+            total = p.Total,
+            creado_en = p.FechaCreacion.ToString("o"),
+            hora = p.FechaCreacion.ToLocalTime().ToString("hh:mm tt"),
+            items = p.Detalles.Select(d => new
+            {
+                cantidad = d.Cantidad,
+                producto = $"Pupusa {d.Especialidad}",
+                tipo_masa = d.Masa,
+                precio = d.Precio,
+                subtotal = d.Subtotal
+            })
+        });
+
+        return Ok(resultado);
+    }
+
+    // GET: api/comandas (Para la COCINA: solo muestra pendientes / en proceso)
     [HttpGet("comandas")]
     public async Task<IActionResult> GetComandas()
     {
         var pedidos = await _context.Pedidos
             .Include(p => p.Detalles)
-            .Where(p => p.Estado == "En Comal" || p.Estado == "Listo")
+            .Where(p => p.Estado == "Pendiente" || p.Estado == "En Comal" || p.Estado == "Listo")
             .OrderByDescending(p => p.Id)
             .ToListAsync();
 
         var comandas = pedidos.Select(p => new
         {
             id = p.Id,
-            numeroOrden = p.NumeroOrden, // <-- Número de orden real (ej. 6657)
+            numeroOrden = p.NumeroOrden,
             cliente = p.ClienteNombre,
             tipo_entrega = "Telegram",
             estado = p.Estado,
@@ -60,32 +93,38 @@ public class PedidosController : ControllerBase
         pedido.Estado = dto.Estado;
         await _context.SaveChangesAsync();
 
-        // Notificación automática al usuario por Telegram
         try
         {
             if (pedido.ChatId != 0)
             {
-                if (dto.Estado == "Listo")
+                string estadoNormalizado = dto.Estado.Trim();
+
+                if (estadoNormalizado.Equals("Listo", StringComparison.OrdinalIgnoreCase))
                 {
+                    string mensajeListo = $"🔥 ¡Tus pupusas de la orden *#{pedido.NumeroOrden}* ya están *LISTAS EN EL COMAL*! 🫓\n\nPuedes pasar a retirarlas o esperar a tu repartidor.";
+
                     await _botClient.SendMessage(
                         pedido.ChatId, 
-                        $"🔥 ¡Tus pupusas de la orden *#{pedido.NumeroOrden}* ya están **LISTAS EN EL COMAL**! 🫓\nPuedes pasar a retirarlas o esperar a tu repartidor.",
-                        Telegram.Bot.Types.Enums.ParseMode.Markdown
+                        mensajeListo,
+                        ParseMode.Markdown
                     );
                 }
-                else if (dto.Estado == "Entregado")
+                else if (estadoNormalizado.Equals("Entregado", StringComparison.OrdinalIgnoreCase) || 
+                         estadoNormalizado.Equals("Despachado", StringComparison.OrdinalIgnoreCase))
                 {
+                    string mensajeEntregado = $"🛵 Tu pedido *#{pedido.NumeroOrden}* ha sido *DESPACHADO / ENTREGADO*. ¡Muchas gracias por tu compra en Pupusería La Bendición! ¡Buen provecho!";
+
                     await _botClient.SendMessage(
                         pedido.ChatId, 
-                        $"🛵 Tu pedido *#{pedido.NumeroOrden}* ha sido **DESPACHADO / ENTREGADO**. ¡Muchas gracias por tu compra en Pupusería La Bendición! ¡Buen provecho!",
-                        Telegram.Bot.Types.Enums.ParseMode.Markdown
+                        mensajeEntregado,
+                        ParseMode.Markdown
                     );
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error al notificar por Telegram: {ex.Message}");
+            Console.WriteLine($"[Telegram Error] ChatId {pedido.ChatId}: {ex.Message}");
         }
 
         return Ok(new { message = "Estado actualizado correctamente", nuevoEstado = pedido.Estado });
