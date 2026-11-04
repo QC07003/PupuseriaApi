@@ -1,137 +1,201 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PupuseriaAPI.Data;
+using PupuseriaAPI.Models;
 using Telegram.Bot;
 using Telegram.Bot.Types.Enums;
 
-namespace PupuseriaAPI.Controllers;
-
-[ApiController]
-[Route("api")]
-public class PedidosController : ControllerBase
+namespace PupuseriaAPI.Controllers
 {
-    private readonly PupuseriaDbContext _context;
-    private readonly ITelegramBotClient _botClient;
-
-    public PedidosController(PupuseriaDbContext context, IConfiguration configuration)
+    [ApiController]
+    [Route("api")]
+    public class PedidosController : ControllerBase
     {
-        _context = context;
-        var token = configuration["TelegramBotToken"] ?? throw new ArgumentNullException("TelegramBotToken");
-        _botClient = new TelegramBotClient(token);
-    }
+        private readonly PupuseriaDbContext _context;
+        private readonly ITelegramBotClient _botClient;
 
-    // GET: api/pedidos (Para el DASHBOARD: devuelve TODOS los pedidos sin filtrar)
-    [HttpGet("pedidos")]
-    public async Task<IActionResult> GetPedidos()
-    {
-        var pedidos = await _context.Pedidos
-            .Include(p => p.Detalles)
-            .OrderByDescending(p => p.Id)
-            .ToListAsync();
-
-        var resultado = pedidos.Select(p => new
+        public PedidosController(PupuseriaDbContext context, IConfiguration configuration)
         {
-            id = p.Id,
-            numeroOrden = p.NumeroOrden,
-            cliente = p.ClienteNombre,
-            tipo_entrega = "Telegram",
-            estado = p.Estado,
-            total = p.Total,
-            creado_en = p.FechaCreacion.ToString("o"),
-            hora = p.FechaCreacion.ToLocalTime().ToString("hh:mm tt"),
-            items = p.Detalles.Select(d => new
-            {
-                cantidad = d.Cantidad,
-                producto = $"Pupusa {d.Especialidad}",
-                tipo_masa = d.Masa,
-                precio = d.Precio,
-                subtotal = d.Subtotal
-            })
-        });
+            _context = context;
+            var token = configuration["TelegramBotToken"] ?? throw new ArgumentNullException("TelegramBotToken");
+            _botClient = new TelegramBotClient(token);
+        }
 
-        return Ok(resultado);
-    }
-
-    // GET: api/comandas (Para la COCINA: solo muestra pendientes / en proceso)
-    [HttpGet("comandas")]
-    public async Task<IActionResult> GetComandas()
-    {
-        var pedidos = await _context.Pedidos
-            .Include(p => p.Detalles)
-            .Where(p => p.Estado == "Pendiente" || p.Estado == "En Comal" || p.Estado == "Listo")
-            .OrderByDescending(p => p.Id)
-            .ToListAsync();
-
-        var comandas = pedidos.Select(p => new
+        // GET: api/pedidos (DASHBOARD)
+        [HttpGet("pedidos")]
+        public async Task<IActionResult> GetPedidos()
         {
-            id = p.Id,
-            numeroOrden = p.NumeroOrden,
-            cliente = p.ClienteNombre,
-            tipo_entrega = "Telegram",
-            estado = p.Estado,
-            total = p.Total,
-            creado_en = p.FechaCreacion.ToString("o"),
-            hora = p.FechaCreacion.ToLocalTime().ToString("hh:mm tt"),
-            items = p.Detalles.Select(d => new
+            var pedidos = await _context.Pedidos
+                .Include(p => p.Detalles)
+                .OrderByDescending(p => p.Id)
+                .ToListAsync();
+
+            var resultado = pedidos.Select(p => new
             {
-                cantidad = d.Cantidad,
-                producto = $"Pupusa {d.Especialidad}",
-                tipo_masa = d.Masa
-            })
-        });
-
-        return Ok(comandas);
-    }
-
-    // PATCH: api/pedidos/{id}/estado
-    [HttpPatch("pedidos/{id}/estado")]
-    public async Task<IActionResult> ActualizarEstado(int id, [FromBody] EstadoDTO dto)
-    {
-        var pedido = await _context.Pedidos.FindAsync(id);
-        if (pedido == null) return NotFound();
-
-        pedido.Estado = dto.Estado;
-        await _context.SaveChangesAsync();
-
-        try
-        {
-            if (pedido.ChatId != 0)
-            {
-                string estadoNormalizado = dto.Estado.Trim();
-
-                if (estadoNormalizado.Equals("Listo", StringComparison.OrdinalIgnoreCase))
+                id = p.Id,
+                numeroOrden = p.NumeroOrden,
+                cliente = p.ClienteNombre,
+                tipo_entrega = "Telegram",
+                estado = p.Estado,
+                total = p.Total,
+                creado_en = p.FechaCreacion.ToString("o"),
+                hora = p.FechaCreacion.ToLocalTime().ToString("hh:mm tt"),
+                items = p.Detalles.Select(d => new
                 {
-                    string mensajeListo = $"🔥 ¡Tus pupusas de la orden *#{pedido.NumeroOrden}* ya están *LISTAS EN EL COMAL*! 🫓\n\nPuedes pasar a retirarlas o esperar a tu repartidor.";
+                    cantidad = d.Cantidad,
+                    producto = $"Pupusa {d.Especialidad}",
+                    tipo_masa = d.Masa,
+                    precio = d.Precio,
+                    subtotal = d.Subtotal
+                })
+            });
 
-                    await _botClient.SendMessage(
-                        pedido.ChatId, 
-                        mensajeListo,
-                        ParseMode.Markdown
-                    );
-                }
-                else if (estadoNormalizado.Equals("Entregado", StringComparison.OrdinalIgnoreCase) || 
-                         estadoNormalizado.Equals("Despachado", StringComparison.OrdinalIgnoreCase))
+            return Ok(resultado);
+        }
+
+        // GET: api/comandas (COCINA KDS)
+        [HttpGet("comandas")]
+        public async Task<IActionResult> GetComandas()
+        {
+            var pedidos = await _context.Pedidos
+                .Include(p => p.Detalles)
+                .Where(p => p.Estado == "Pendiente" || p.Estado == "En Comal" || p.Estado == "Listo")
+                .OrderByDescending(p => p.Id)
+                .ToListAsync();
+
+            var comandas = pedidos.Select(p => new
+            {
+                id = p.Id,
+                numeroOrden = p.NumeroOrden,
+                cliente = p.ClienteNombre,
+                tipo_entrega = "Telegram",
+                estado = p.Estado,
+                total = p.Total,
+                creado_en = p.FechaCreacion.ToString("o"),
+                hora = p.FechaCreacion.ToLocalTime().ToString("hh:mm tt"),
+                items = p.Detalles.Select(d => new
                 {
-                    string mensajeEntregado = $"🛵 Tu pedido *#{pedido.NumeroOrden}* ha sido *DESPACHADO / ENTREGADO*. ¡Muchas gracias por tu compra en Pupusería La Bendición! ¡Buen provecho!";
+                    cantidad = d.Cantidad,
+                    producto = $"Pupusa {d.Especialidad}",
+                    tipo_masa = d.Masa
+                })
+            });
 
-                    await _botClient.SendMessage(
-                        pedido.ChatId, 
-                        mensajeEntregado,
-                        ParseMode.Markdown
-                    );
+            return Ok(comandas);
+        }
+
+        // POST: api/pedidos (CREAR NUEVO PEDIDO DESDE DASHBOARD)
+        [HttpPost("pedidos")]
+        public async Task<IActionResult> CrearPedido([FromBody] PedidoCrearDTO dto)
+        {
+            if (dto == null || dto.Items == null || !dto.Items.Any())
+            {
+                return BadRequest(new { message = "El pedido debe contener al menos un producto." });
+            }
+
+            string nuevoNumeroOrden = $"ORD-{Random.Shared.Next(1000, 9999)}";
+
+            var nuevoPedido = new Pedido
+            {
+                NumeroOrden = nuevoNumeroOrden,
+                ClienteNombre = dto.Cliente ?? "Cliente Dashboard",
+                Estado = "Pendiente",
+                Total = dto.Total,
+                FechaCreacion = DateTime.UtcNow,
+                ChatId = 0
+            };
+
+            // Agrega cada ítem usando instanciación implícita
+            foreach (var item in dto.Items)
+            {
+                nuevoPedido.Detalles.Add(new()
+                {
+                    Especialidad = item.Especialidad ?? "Revuelta",
+                    Masa = item.TipoMasa ?? "Maíz",
+                    Cantidad = item.Cantidad,
+                    Precio = item.Precio,
+                    Subtotal = item.Subtotal
+                });
+            }
+
+            _context.Pedidos.Add(nuevoPedido);
+            await _context.SaveChangesAsync();
+
+            return CreatedAtAction(nameof(GetPedidos), new { id = nuevoPedido.Id }, new
+            {
+                message = "Pedido registrado correctamente",
+                id = nuevoPedido.Id,
+                numeroOrden = nuevoPedido.NumeroOrden
+            });
+        }
+
+        // PATCH: api/pedidos/{id}/estado
+        [HttpPatch("pedidos/{id}/estado")]
+        public async Task<IActionResult> ActualizarEstado(int id, [FromBody] EstadoDTO dto)
+        {
+            var pedido = await _context.Pedidos.FindAsync(id);
+            if (pedido == null) return NotFound();
+
+            pedido.Estado = dto.Estado;
+            await _context.SaveChangesAsync();
+
+            try
+            {
+                if (pedido.ChatId != 0)
+                {
+                    string estadoNormalizado = dto.Estado.Trim();
+
+                    if (estadoNormalizado.Equals("Listo", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string mensajeListo = $"🔥 ¡Tus pupusas de la orden *#{pedido.NumeroOrden}* ya están *LISTAS EN EL COMAL*! 🫓\n\nPuedes pasar a retirarlas o esperar a tu repartidor.";
+
+                        await _botClient.SendMessage(
+                            pedido.ChatId, 
+                            mensajeListo,
+                            ParseMode.Markdown
+                        );
+                    }
+                    else if (estadoNormalizado.Equals("Entregado", StringComparison.OrdinalIgnoreCase) || 
+                             estadoNormalizado.Equals("Despachado", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string mensajeEntregado = $"🛵 Tu pedido *#{pedido.NumeroOrden}* ha sido *DESPACHADO / ENTREGADO*. ¡Muchas gracias por tu compra en Pupusería La Bendición! ¡Buen provecho!";
+
+                        await _botClient.SendMessage(
+                            pedido.ChatId, 
+                            mensajeEntregado,
+                            ParseMode.Markdown
+                        );
+                    }
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Telegram Error] ChatId {pedido.ChatId}: {ex.Message}");
-        }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Telegram Error] ChatId {pedido.ChatId}: {ex.Message}");
+            }
 
-        return Ok(new { message = "Estado actualizado correctamente", nuevoEstado = pedido.Estado });
+            return Ok(new { message = "Estado actualizado correctamente", nuevoEstado = pedido.Estado });
+        }
     }
-}
 
-public class EstadoDTO
-{
-    public string Estado { get; set; } = string.Empty;
+    // --- DTOs agrupados correctamente dentro del namespace ---
+    public class EstadoDTO
+    {
+        public string Estado { get; set; } = string.Empty;
+    }
+
+    public class PedidoCrearDTO
+    {
+        public string Cliente { get; set; } = string.Empty;
+        public decimal Total { get; set; }
+        public List<PedidoItemDTO> Items { get; set; } = new();
+    }
+
+    public class PedidoItemDTO
+    {
+        public string Especialidad { get; set; } = string.Empty;
+        public string TipoMasa { get; set; } = string.Empty;
+        public int Cantidad { get; set; }
+        public decimal Precio { get; set; }
+        public decimal Subtotal { get; set; }
+    }
 }
